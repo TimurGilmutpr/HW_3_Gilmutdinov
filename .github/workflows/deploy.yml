@@ -1,0 +1,92 @@
+name: Model Deployment Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          
+      - name: Run tests
+        run: |
+          python -c "from app.model.model import MLModel; m = MLModel('test'); print('Model test passed')"
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix={{branch}}-
+            type=ref,event=branch
+            type=raw,value=latest
+          
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          
+      - name: Update deployment manifest
+        run: |
+          # Обновляем версию модели в green deployment
+          sed -i 's/MODEL_VERSION=v1.0.0/MODEL_VERSION=${{ github.sha }}/' docker-compose.green.yml
+          
+      - name: Deploy to test environment
+        if: github.ref == 'refs/heads/develop'
+        run: |
+          echo "Deploying to test environment..."
+          # Здесь команды для деплоя в тестовое окружение
+          
+      - name: Deploy to production
+        if: github.ref == 'refs/heads/main'
+        run: |
+          echo "Deploying to production..."
+          # Здесь команды для деплоя в production
+          # Например, через SSH или API облачного провайдера
+
+  health-check:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Check service health
+        run: |
+          echo "Health check would be performed here"
+          # Пример проверки здоровья
+          # curl -f http://your-service/health || exit 1
